@@ -11,15 +11,17 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
-
 #include <memory>
+#include <stack>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "common/exception.h"
+#include "common/logger.h"
 #include "common/rwlatch.h"
 
 namespace bustub {
@@ -260,9 +262,7 @@ class Trie {
    * @return True if insertion succeeds, false if the key already exists
    */
   template <typename T>
-  bool Insert(const std::string &key, T value) {
-    return false;
-  }
+  bool Insert(const std::string &key, T value);
 
   /**
    * TODO(P0): Add implementation
@@ -281,7 +281,7 @@ class Trie {
    * @param key Key used to traverse the trie and find the correct node
    * @return True if the key exists and is removed, false otherwise
    */
-  bool Remove(const std::string &key) { return false; }
+  bool Remove(const std::string &key);
 
   /**
    * TODO(P0): Add implementation
@@ -303,7 +303,90 @@ class Trie {
    */
   template <typename T>
   T GetValue(const std::string &key, bool *success);
+
+  std::tuple<std::stack<std::unique_ptr<TrieNode> *>, bool> IsKey(const std::string &key);
 };
+
+/*
+ * =================================== Trie LockGuard ===================================
+ */
+class ReadLockGuard {
+ public:
+  explicit ReadLockGuard(ReaderWriterLatch &mutex) : mutex_(mutex) { mutex_.RLock(); }
+
+  ~ReadLockGuard() { mutex_.RUnlock(); }
+
+  // 禁用拷贝构造和拷贝赋值
+  ReadLockGuard(const ReadLockGuard &) = delete;
+  ReadLockGuard &operator=(const ReadLockGuard &) = delete;
+
+ private:
+  ReaderWriterLatch &mutex_;
+};
+
+class WriteLockGuard {
+ public:
+  explicit WriteLockGuard(ReaderWriterLatch &mutex) : mutex_(mutex) { mutex_.WLock(); }
+
+  ~WriteLockGuard() { mutex_.WUnlock(); }
+
+  // 禁用拷贝构造和拷贝赋值
+  WriteLockGuard(const WriteLockGuard &) = delete;
+  WriteLockGuard &operator=(const WriteLockGuard &) = delete;
+
+ private:
+  ReaderWriterLatch &mutex_;
+};
+/*
+ * =================================== Trie LockGuard ===================================
+ */
+
+/*
+ * =================================== TrieNode ===================================
+ */
+TrieNode::TrieNode(char key_char) : key_char_(key_char) {}
+
+TrieNode::TrieNode(TrieNode &&other_trie_node) noexcept
+    : key_char_(other_trie_node.key_char_),
+      is_end_(other_trie_node.is_end_),
+      children_(std::move(other_trie_node.children_)) {}
+
+bool TrieNode::HasChildren() const { return !children_.empty(); }
+
+bool TrieNode::HasChild(char key_char) const { return children_.find(key_char) != children_.end(); }
+
+bool TrieNode::IsEndNode() const { return is_end_; }
+
+char TrieNode::GetKeyChar() const { return key_char_; }
+
+void TrieNode::SetEndNode(bool is_end) { is_end_ = is_end; }
+
+std::unique_ptr<TrieNode> *TrieNode::InsertChildNode(char key_char, std::unique_ptr<TrieNode> &&child) {
+  if (this->HasChild(key_char) || child->GetKeyChar() != key_char) {
+    return nullptr;
+  }
+  this->children_[key_char] = std::move(child);
+  return &this->children_[key_char];
+}
+
+std::unique_ptr<TrieNode> *TrieNode::GetChildNode(char key_char) {
+  if (!this->HasChild(key_char)) {
+    return nullptr;
+  }
+  return &this->children_[key_char];
+}
+
+void TrieNode::RemoveChildNode(char key_char) {
+  if (!this->HasChild(key_char)) {
+    return;
+  }
+  // 切除联系
+  this->children_.erase(key_char);
+}
+
+/*
+ * =================================== TrieNode ===================================
+ */
 
 /*
  * =================================== TrieNodeWithValue ===================================
@@ -329,23 +412,96 @@ inline TrieNodeWithValue<T>::TrieNodeWithValue(char key_char, T value) : TrieNod
 inline Trie::Trie() : root_(std::make_unique<TrieNode>('\0')) {}
 
 template <typename T>
+inline bool Trie::Insert(const std::string &key, T value) {
+  if (key.empty()) {
+    return false;
+  }
+  // lock
+  WriteLockGuard no_used(this->latch_);
+  std::unique_ptr<TrieNode> *tmp_root = &this->root_;
+  for (auto partial_key : key) {
+    // 没找到，就新建
+    if (!(*tmp_root)->HasChild(partial_key)) {
+      auto tmp = (*tmp_root)->InsertChildNode(partial_key, std::make_unique<TrieNode>(partial_key));
+      if (tmp == nullptr) {
+        LOG_ERROR("Insert InsertChildNode failed %s", key.c_str());
+        return false;
+      }
+    }
+    tmp_root = (*tmp_root)->GetChildNode(partial_key);
+  }
+
+  // 最终tmpRoot指向终点
+  if ((*tmp_root)->IsEndNode()) {
+    LOG_INFO("Key already with Value %s", key.c_str());
+    return false;
+  }
+
+  // convert it to TrieNodeWithValue
+  (*tmp_root).reset(new TrieNodeWithValue<T>(std::move(**tmp_root), value));
+  if (*tmp_root == nullptr) {
+    LOG_ERROR("convert it to TrieNodeWithValue failed %s", key.c_str());
+    return false;
+  }
+
+  return true;
+}
+
+inline bool Trie::Remove(const std::string &key) {
+  if (key.empty()) {
+    return false;
+  }
+  // lock
+  WriteLockGuard no_used(this->latch_);
+  auto [revokeStack, isKey] = this->IsKey(key);
+  if (!isKey) {
+    return false;
+  }
+
+  std::unique_ptr<TrieNode> *tmp_node = revokeStack.top();
+  revokeStack.pop();
+  if ((*tmp_node)->HasChildren()) {
+    // (*tmp_node).reset(new TrieNode(std::move(**tmp_node)));
+    (*tmp_node) = std::make_unique<TrieNode>(std::move(**tmp_node));
+    if (*tmp_node == nullptr) {
+      LOG_ERROR("convert it to TrieNode failed %s", key.c_str());
+      return false;
+    }
+    return true;
+  }
+
+  // revokeStack.size() >= 1
+  while (!revokeStack.empty()) {
+    (*revokeStack.top())->RemoveChildNode((*tmp_node)->GetKeyChar());
+    if ((*revokeStack.top())->HasChildren() || (*revokeStack.top())->IsEndNode()) {
+      break;
+    }
+    tmp_node = revokeStack.top();
+    revokeStack.pop();
+  }
+  return true;
+}
+
+template <typename T>
 inline T Trie::GetValue(const std::string &key, bool *success) {
   if (key.empty()) {
     *success = false;
     return {};
   }
-  std::unique_ptr<TrieNode> *tmpRoot = &this->root_;
-  for (auto partialKey : key) {
+  // lock
+  ReadLockGuard no_used(this->latch_);
+  std::unique_ptr<TrieNode> *tmp_root = &this->root_;
+  for (auto partial_key : key) {
     // 没找到
-    if (!(*tmpRoot)->HasChild(partialKey)) {
+    if (!(*tmp_root)->HasChild(partial_key)) {
       *success = false;
       return {};
     }
-    tmpRoot = ((*tmpRoot)->GetChildNode(partialKey));
+    tmp_root = (*tmp_root)->GetChildNode(partial_key);
   }
 
   // dynamic cast
-  auto tmp = dynamic_cast<TrieNodeWithValue<T> *>((tmpRoot)->get());
+  auto tmp = dynamic_cast<TrieNodeWithValue<T> *>((tmp_root)->get());
   if (tmp == nullptr) {
     *success = false;
     return {};
@@ -353,6 +509,25 @@ inline T Trie::GetValue(const std::string &key, bool *success) {
 
   *success = true;
   return tmp->GetValue();
+}
+
+// only remove invoke
+inline std::tuple<std::stack<std::unique_ptr<TrieNode> *>, bool> Trie::IsKey(const std::string &key) {
+  if (key.empty()) {
+    return std::make_tuple(std::stack<std::unique_ptr<TrieNode> *>{}, false);
+  }
+  std::stack<std::unique_ptr<TrieNode> *> ret_stack;
+  std::unique_ptr<TrieNode> *tmp_root = &this->root_;
+  for (auto partial_key : key) {
+    // 没找到
+    if (!(*tmp_root)->HasChild(partial_key)) {
+      return std::make_tuple(std::stack<std::unique_ptr<TrieNode> *>{}, false);
+    }
+    ret_stack.push(tmp_root);
+    tmp_root = (*tmp_root)->GetChildNode(partial_key);
+  }
+  ret_stack.push(tmp_root);
+  return std::make_tuple(ret_stack, (*tmp_root)->IsEndNode());
 }
 
 /*
