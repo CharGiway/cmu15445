@@ -118,7 +118,7 @@ class BufferPoolManagerInstance : public BufferPoolManager {
    */
   auto FlushPgImp(page_id_t page_id) -> bool override;
 
-  auto flushPgImp(page_id_t page_id) -> bool;
+  auto DoFlushPgImp(page_id_t page_id) -> bool;
 
   /**
    * TODO(P1): Add implementation

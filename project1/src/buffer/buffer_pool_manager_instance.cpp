@@ -12,21 +12,18 @@
 
 #include "buffer/buffer_pool_manager_instance.h"
 
+#include <memory>
+#include <string>
 #include "common/config.h"
 #include "common/exception.h"
 #include "common/logger.h"
 #include "common/macros.h"
-#include <memory>
-#include <string>
 
 namespace bustub {
 
-BufferPoolManagerInstance::BufferPoolManagerInstance(size_t pool_size,
-                                                     DiskManager *disk_manager,
-                                                     size_t replacer_k,
+BufferPoolManagerInstance::BufferPoolManagerInstance(size_t pool_size, DiskManager *disk_manager, size_t replacer_k,
                                                      LogManager *log_manager)
-    : pool_size_(pool_size), disk_manager_(disk_manager),
-      log_manager_(log_manager) {
+    : pool_size_(pool_size), disk_manager_(disk_manager), log_manager_(log_manager) {
   // we allocate a consecutive memory space for the buffer pool
   pages_ = new Page[pool_size_];
   page_table_ = new ExtendibleHashTable<page_id_t, frame_id_t>(bucket_size_);
@@ -78,10 +75,9 @@ auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * {
 
   // if replacement frame dirty
   if (pages_[tmp_frame_id].IsDirty()) {
-    bool success = flushPgImp(pages_[tmp_frame_id].page_id_);
+    bool success = DoFlushPgImp(pages_[tmp_frame_id].page_id_);
     if (!success) {
-      LOG_ERROR("NewPgImp flushPgImp page_id=%d 未能成功",
-                pages_[tmp_frame_id].page_id_);
+      LOG_ERROR("NewPgImp DoFlushPgImp page_id=%d 未能成功", pages_[tmp_frame_id].page_id_);
       return nullptr;
     }
   }
@@ -141,11 +137,10 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
     }
   }
 
-  if (pages_[tmp_frame_id].IsDirty() &&
-      pages_[tmp_frame_id].page_id_ != INVALID_PAGE_ID) {
-    success = flushPgImp(pages_[tmp_frame_id].page_id_);
+  if (pages_[tmp_frame_id].IsDirty() && pages_[tmp_frame_id].page_id_ != INVALID_PAGE_ID) {
+    success = DoFlushPgImp(pages_[tmp_frame_id].page_id_);
     if (!success) {
-      LOG_ERROR("FetchPgImp flushPgImp page_id=%d 未能成功", page_id);
+      LOG_ERROR("FetchPgImp DoFlushPgImp page_id=%d 未能成功", page_id);
       return nullptr;
     }
   }
@@ -174,82 +169,66 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
   return &pages_[tmp_frame_id];
 }
 
-auto BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id,
-                                           bool is_dirty) -> bool {
+auto BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) -> bool {
   std::scoped_lock<std::mutex> locker(latch_);
 
-  int frame_id; // 待操作的页框号
-
-  /* 查询并修改缓冲池中指定页面的信息 */
-  if (page_table_->Find(page_id, frame_id)) {
-    /* 如果当前页面pin_count_已经为0直接返回false */
-    if (pages_[frame_id].GetPinCount() == 0) {
-      return false;
-    }
-
-    /* 这里的脏位变换只支持从false到true，从true到false需要与回写配合 */
-    if (!pages_[frame_id].IsDirty() && is_dirty) {
-      pages_[frame_id].is_dirty_ = true;
-    }
-
-    /* 如果当前操作使得pin_count_值为0，需要将对应页面设置为可驱逐。 */
-    if (--pages_[frame_id].pin_count_ == 0) {
-      replacer_->SetEvictable(frame_id, true);
-    }
-
-    return true;
+  frame_id_t tmp_frame_id = -1;
+  bool success = page_table_->Find(page_id, tmp_frame_id);
+  if (!success) {
+    return false;
+  }
+  if (pages_[tmp_frame_id].pin_count_ == 0) {
+    return false;
+  }
+  pages_[tmp_frame_id].pin_count_--;
+  if (pages_[tmp_frame_id].pin_count_ == 0) {
+    replacer_->SetEvictable(tmp_frame_id, true);
   }
 
-  return false;
+  // 只有当前dirty=false，要设置为is_dirty，才可以；反过来是不能设置的，因为需要写会disk
+  if (!pages_[tmp_frame_id].IsDirty() && is_dirty) {
+    pages_[tmp_frame_id].is_dirty_ = true;
+  }
+  return true;
 }
 
-auto BufferPoolManagerInstance::flushPgImp(page_id_t page_id) -> bool {
-  int frame_id; // 待操作的页框号
-
-  /* 如果指定页面存在且脏位为true需要进行回写 */
-  if (page_table_->Find(page_id, frame_id)) {
-    if (pages_[frame_id].IsDirty()) {
-      disk_manager_->WritePage(pages_[frame_id].GetPageId(),
-                               pages_[frame_id].GetData());
-      pages_[frame_id].is_dirty_ = false;
-    }
-
-    return true;
+auto BufferPoolManagerInstance::DoFlushPgImp(page_id_t page_id) -> bool {
+  frame_id_t tmp_frame_id = -1;
+  bool success = page_table_->Find(page_id, tmp_frame_id);
+  if (!success) {
+    return false;
   }
 
-  return false;
+  auto page_data = pages_[tmp_frame_id].GetData();
+  disk_manager_->WritePage(page_id, page_data);
+  pages_[tmp_frame_id].is_dirty_ = false;
+  return true;
 }
 
 auto BufferPoolManagerInstance::FlushPgImp(page_id_t page_id) -> bool {
   std::scoped_lock<std::mutex> locker(latch_);
 
-  int frame_id; // 待操作的页框号
-
-  /* 如果指定页面存在且脏位为true需要进行回写 */
-  if (page_table_->Find(page_id, frame_id)) {
-    if (pages_[frame_id].IsDirty()) {
-      disk_manager_->WritePage(pages_[frame_id].GetPageId(),
-                               pages_[frame_id].GetData());
-      pages_[frame_id].is_dirty_ = false;
-    }
-
-    return true;
+  frame_id_t tmp_frame_id = -1;
+  bool success = page_table_->Find(page_id, tmp_frame_id);
+  if (!success) {
+    return false;
   }
 
-  return false;
+  auto page_data = pages_[tmp_frame_id].GetData();
+  disk_manager_->WritePage(page_id, page_data);
+  pages_[tmp_frame_id].is_dirty_ = false;
+  return true;
 }
 
 // 只flush page_table_ 中有的
 void BufferPoolManagerInstance::FlushAllPgsImp() {
   std::scoped_lock<std::mutex> locker(latch_);
 
-  /* 依次回写所有的脏页 */
-  for (int frame_id = 0; frame_id < static_cast<int>(pool_size_); frame_id++) {
-    if (pages_[frame_id].GetPageId() != INVALID_PAGE_ID &&
-        pages_[frame_id].IsDirty()) {
-      disk_manager_->WritePage(pages_[frame_id].GetPageId(),
-                               pages_[frame_id].GetData());
-      pages_[frame_id].is_dirty_ = false;
+  for (size_t index = 0; index < pool_size_; index++) {
+    bool success = DoFlushPgImp(pages_[index].GetPageId());
+    if (!success) {
+      // LOG_INFO("%s can not flush in page_table_, skip",
+      //          std::to_string(pages_[index].GetPageId()).c_str());
     }
   }
 }
@@ -257,44 +236,42 @@ void BufferPoolManagerInstance::FlushAllPgsImp() {
 auto BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) -> bool {
   std::scoped_lock<std::mutex> locker(latch_);
 
-  int frame_id; // 待操作的页框号
-
-  if (page_table_->Find(page_id, frame_id)) {
-    /* 无法删除被固定的页面 */
-    if (pages_[frame_id].GetPinCount() > 0) {
-      return false;
-    }
-
-    /* 如果脏位为true需要进行回写 */
-    if (pages_[frame_id].IsDirty()) {
-      disk_manager_->WritePage(pages_[frame_id].GetPageId(),
-                               pages_[frame_id].GetData());
-    }
-
-    /* 从page_table_和replacer_中删除页面的相关信息 */
-    page_table_->Remove(page_id);
-    replacer_->Remove(frame_id);
-
-    /* 重置页面的在内存中的缓存和元数据 */
-    pages_[frame_id].ResetMemory();
-    pages_[frame_id].page_id_ = INVALID_PAGE_ID;
-    pages_[frame_id].is_dirty_ = false;
-    pages_[frame_id].pin_count_ = 0;
-
-    /* 将页框归还给空闲链表 */
-    free_list_.emplace_back(frame_id);
-
-    /* 重置页面在外存中的数据 */
-    DeallocatePage(page_id);
-
+  frame_id_t tmp_frame_id = -1;
+  bool success = page_table_->Find(page_id, tmp_frame_id);
+  if (!success) {
     return true;
   }
+
+  if (pages_[tmp_frame_id].pin_count_ > 0) {
+    return false;
+  }
+
+  if (pages_[tmp_frame_id].IsDirty()) {
+    bool success = DoFlushPgImp(pages_[tmp_frame_id].GetPageId());
+    if (!success) {
+      // LOG_INFO("%s can not flush in page_table_, skip",
+      //          std::to_string(pages_[index].GetPageId()).c_str());
+    }
+  }
+  success = page_table_->Remove(page_id);
+  if (!success) {
+    LOG_ERROR("索引删除 page_id %d 失败", page_id);
+    return false;
+  }
+  // stop tracking
+  replacer_->Remove(tmp_frame_id);
+  free_list_.push_back(tmp_frame_id);
+
+  pages_[tmp_frame_id].ResetMemory();
+  pages_[tmp_frame_id].pin_count_ = 0;
+  pages_[tmp_frame_id].is_dirty_ = false;
+  pages_[tmp_frame_id].page_id_ = INVALID_PAGE_ID;
+
+  DeallocatePage(page_id);
 
   return true;
 }
 
-auto BufferPoolManagerInstance::AllocatePage() -> page_id_t {
-  return next_page_id_++;
-}
+auto BufferPoolManagerInstance::AllocatePage() -> page_id_t { return next_page_id_++; }
 
-} // namespace bustub
+}  // namespace bustub

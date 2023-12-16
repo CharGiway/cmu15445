@@ -1,6 +1,6 @@
 // test_p0.cpp
-#include "primer/p0_trie.h"
 #include "gtest/gtest.h"
+#include "primer/p0_trie.h"
 
 TEST(P0_TRIE, GET_VALUE) {
   bustub::Trie *trie = new bustub::Trie();

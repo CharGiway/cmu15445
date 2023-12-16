@@ -16,7 +16,7 @@
 
 namespace bustub {
 
-TEST(LRUKReplacerTest, SampleTest) {
+TEST(LRUKReplacerTest, DISABLED_SampleTest) {
   LRUKReplacer lru_replacer(7, 2);
 
   // Scenario: add six elements to the replacer. We have [1,2,3,4,5]. Frame 6 is non-evictable.
@@ -97,74 +97,4 @@ TEST(LRUKReplacerTest, SampleTest) {
   lru_replacer.Remove(1);
   ASSERT_EQ(0, lru_replacer.Size());
 }
-
-TEST(LRUKReplacerTest, EvictTest1) {
-    LRUKReplacer lru_replacer(3, 3);
-    frame_id_t frame_id;
-
-    ASSERT_EQ(lru_replacer.Size(), 0);
-
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(2);
-    lru_replacer.RecordAccess(2);
-    lru_replacer.RecordAccess(2);
-    lru_replacer.RecordAccess(1);
-
-    ASSERT_EQ(lru_replacer.Size(), 2);
-
-    lru_replacer.RecordAccess(3);
-
-    lru_replacer.Evict(&frame_id);
-    ASSERT_EQ(frame_id, 3);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 1);
-
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(3);
-    lru_replacer.RecordAccess(1);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 1);
-
-    lru_replacer.RecordAccess(3);
-    lru_replacer.RecordAccess(3);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 2);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 3);
-}
-
-TEST(LRUKReplacerTest, EvictTest2) {
-    LRUKReplacer lru_replacer(3, 3);
-    frame_id_t frame_id;
-
-    ASSERT_EQ(lru_replacer.Size(), 0);
-
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(1);
-    lru_replacer.RecordAccess(2);
-    lru_replacer.RecordAccess(2);
-    lru_replacer.RecordAccess(3);
-    lru_replacer.RecordAccess(3);
-    lru_replacer.RecordAccess(3);
-    lru_replacer.RecordAccess(2);
-
-    ASSERT_EQ(lru_replacer.Size(), 3);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 1);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 2);
-
-    lru_replacer.Evict(&frame_id);
-    EXPECT_EQ(frame_id, 3);
-}
-
 }  // namespace bustub

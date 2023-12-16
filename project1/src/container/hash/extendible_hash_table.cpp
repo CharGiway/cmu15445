@@ -39,12 +39,6 @@ auto ExtendibleHashTable<K, V>::IndexOf(const K &key) -> size_t {
 }
 
 template <typename K, typename V>
-auto ExtendibleHashTable<K, V>::IndexOfInK(const K &key,
-                                           const int dept) -> size_t {
-  return (std::hash<K>()(key) >> (dept - 1)) & 1;
-}
-
-template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::GetGlobalDepth() const -> int {
   std::scoped_lock<std::mutex> lock(latch_);
   return GetGlobalDepthInternal();
@@ -62,8 +56,7 @@ auto ExtendibleHashTable<K, V>::GetLocalDepth(int dir_index) const -> int {
 }
 
 template <typename K, typename V>
-auto ExtendibleHashTable<K, V>::GetLocalDepthInternal(int dir_index) const
-    -> int {
+auto ExtendibleHashTable<K, V>::GetLocalDepthInternal(int dir_index) const -> int {
   return dir_[dir_index]->GetDepth();
 }
 
@@ -97,12 +90,11 @@ auto ExtendibleHashTable<K, V>::Remove(const K &key) -> bool {
 template <typename K, typename V>
 void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
   std::scoped_lock<std::mutex> lock(latch_);
-  insert(key, value);
+  DoInsert(key, value);
 }
 
 template <typename K, typename V>
-void ExtendibleHashTable<K, V>::insert(const K &key, const V &value) {
-
+void ExtendibleHashTable<K, V>::DoInsert(const K &key, const V &value) {
   auto index = IndexOf(key);
   if (!dir_[index]->IsFull()) {
     auto success = dir_[index]->Insert(key, value);
@@ -111,57 +103,56 @@ void ExtendibleHashTable<K, V>::insert(const K &key, const V &value) {
     }
     return;
   }
-  
+
   // index 如果满了，就需要开始分裂了
   // 如果是等于global_depth_，那么需要扩展一下
   if (dir_[index]->GetDepth() == this->global_depth_) {
     this->global_depth_++;
-    auto oldLen = dir_.size();
-    auto tmpBucket = std::vector<std::shared_ptr<Bucket>>(oldLen * 2);
-    for (size_t i = 0; i < oldLen; i++) {
-      tmpBucket[i] = this->dir_[i];
-      tmpBucket[i + oldLen] = this->dir_[i];
+    auto old_len = dir_.size();
+    auto tmp_bucket = std::vector<std::shared_ptr<Bucket>>(old_len * 2);
+    for (size_t i = 0; i < old_len; i++) {
+      tmp_bucket[i] = this->dir_[i];
+      tmp_bucket[i + old_len] = this->dir_[i];
     }
 
     // 在将tmpBucket分配给dir_之前释放旧的buckets
-    for (size_t i = 0; i < oldLen; i++) {
+    for (size_t i = 0; i < old_len; i++) {
       this->dir_[i].reset();
     }
 
-    this->dir_ = tmpBucket;
+    this->dir_ = tmp_bucket;
   }
 
   // 分裂第index个
-  std::vector<std::shared_ptr<Bucket>> tmpDir(2);
-  for (auto &tmp : tmpDir) {
-    tmp = std::make_shared<Bucket>(this->bucket_size_,
-                                   this->dir_[index]->GetDepth() + 1);
+  std::vector<std::shared_ptr<Bucket>> tmp_dir(2);
+  for (auto &tmp : tmp_dir) {
+    tmp = std::make_shared<Bucket>(this->bucket_size_, this->dir_[index]->GetDepth() + 1);
   }
-  auto localItem = this->dir_[index];
+  auto local_item = this->dir_[index];
   // bool flip = false;
-  auto localMask = 1 << (localItem->GetDepth());
+  auto local_mask = 1 << (local_item->GetDepth());
   for (size_t i = 0; i < this->dir_.size(); i++) {
-    if (dir_[i] != localItem) {
+    if (dir_[i] != local_item) {
       continue;
     }
     // if (flip) {
-    //   this->dir_[i] = tmpDir[0];
+    //   this->dir_[i] = tmp_dir[0];
     //   flip = !flip;
     // } else {
-    //   this->dir_[i] = tmpDir[1];
+    //   this->dir_[i] = tmp_dir[1];
     //   flip = !flip;
     // }
-    if (localMask & i) {
-      this->dir_[i] = tmpDir[1];
+    if (local_mask & i) {
+      this->dir_[i] = tmp_dir[1];
     } else {
-      this->dir_[i] = tmpDir[0];
+      this->dir_[i] = tmp_dir[0];
     }
   }
   this->num_buckets_++;
 
-  for (auto const &tmpItem : localItem->GetItems()) {
-    auto tmpIndex = IndexOf(tmpItem.first);
-    auto success = this->dir_[tmpIndex]->Insert(tmpItem.first, tmpItem.second);
+  for (auto const &tmp_item : local_item->GetItems()) {
+    auto tmp_index = IndexOf(tmp_item.first);
+    auto success = this->dir_[tmp_index]->Insert(tmp_item.first, tmp_item.second);
     if (!success) {
       LOG_ERROR("Insert failed");
     }
@@ -176,17 +167,14 @@ void ExtendibleHashTable<K, V>::insert(const K &key, const V &value) {
   // }
 
   // 漂亮，假设还需要继续扩容，可以使用同一套代码
-  insert(key, value);
-
-  return;
+  DoInsert(key, value);
 }
 
 //===--------------------------------------------------------------------===//
 // Bucket
 //===--------------------------------------------------------------------===//
 template <typename K, typename V>
-ExtendibleHashTable<K, V>::Bucket::Bucket(size_t array_size, int depth)
-    : size_(array_size), depth_(depth) {}
+ExtendibleHashTable<K, V>::Bucket::Bucket(size_t array_size, int depth) : size_(array_size), depth_(depth) {}
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Find(const K &key, V &value) -> bool {
@@ -203,7 +191,7 @@ template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
   for (auto it = list_.begin(); it != list_.end(); ++it) {
     if (it->first == key) {
-      it = list_.erase(it); // 删除元素，并将迭代器更新为下一个有效位置
+      it = list_.erase(it);  // 删除元素，并将迭代器更新为下一个有效位置
       return true;
     }
   }
@@ -211,8 +199,7 @@ auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
 }
 
 template <typename K, typename V>
-auto ExtendibleHashTable<K, V>::Bucket::Insert(const K &key,
-                                               const V &value) -> bool {
+auto ExtendibleHashTable<K, V>::Bucket::Insert(const K &key, const V &value) -> bool {
   for (auto &list_item : list_) {
     if (list_item.first == key) {
       list_item.second = value;
@@ -233,4 +220,4 @@ template class ExtendibleHashTable<int, int>;
 template class ExtendibleHashTable<int, std::string>;
 template class ExtendibleHashTable<int, std::list<int>::iterator>;
 
-} // namespace bustub
+}  // namespace bustub

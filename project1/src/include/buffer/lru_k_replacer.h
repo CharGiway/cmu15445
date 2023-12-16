@@ -12,17 +12,17 @@
 
 #pragma once
 
-#include "common/config.h"
-#include "common/macros.h"
 #include <cstddef>
 #include <ctime>
 #include <deque>
 #include <limits>
 #include <list>
 #include <memory>
-#include <mutex> // NOLINT
+#include <mutex>  // NOLINT
 #include <unordered_map>
 #include <vector>
+#include "common/config.h"
+#include "common/macros.h"
 
 namespace bustub {
 
@@ -39,17 +39,15 @@ namespace bustub {
  */
 struct Node {
   frame_id_t frame_id_;
-  size_t access_cout;
-  bool evitable;
+  size_t access_count_;
+  bool evitable_;
   size_t k_;
-  std::list<std::shared_ptr<Node>>::iterator iter;
+  std::list<std::shared_ptr<Node>>::iterator iter_;
   std::list<std::time_t> timestamp_list_;
   Node() = delete;
-  Node(size_t k)
-      : frame_id_(0), access_cout(0), evitable(true), k_(k),
-        iter(std::list<std::shared_ptr<Node>>::iterator()), timestamp_list_() {}
+  explicit Node(size_t k) : frame_id_(0), access_count_(0), evitable_(true), k_(k) {}
   void UpdateAccess(time_t current_timestamp_) {
-    access_cout++;
+    access_count_++;
     timestamp_list_.push_front(current_timestamp_);
     if (timestamp_list_.size() > k_) {
       timestamp_list_.pop_back();
@@ -58,7 +56,7 @@ struct Node {
 };
 
 class LRUKReplacer {
-public:
+ public:
   /**
    *
    * TODO(P1): Add implementation
@@ -153,9 +151,8 @@ public:
    * @param frame_id id of frame to be removed
    */
   void Remove(frame_id_t frame_id);
-  bool remove(frame_id_t frame_id,
-              std::unordered_map<frame_id_t, std::shared_ptr<Node>> &access_,
-              std::list<std::shared_ptr<Node>> &list_);
+  auto DoRemove(frame_id_t frame_id, std::unordered_map<frame_id_t, std::shared_ptr<Node>> &access_,
+                std::list<std::shared_ptr<Node>> &list_) -> bool;
 
   /**
    * TODO(P1): Add implementation
@@ -167,7 +164,7 @@ public:
    */
   auto Size() -> size_t;
 
-private:
+ private:
   // TODO(student): implement me! You can replace these member variables as
   // you like. Remove maybe_unused if you start using them.
   size_t current_timestamp_{0};
@@ -175,9 +172,8 @@ private:
   size_t replacer_size_;
   size_t k_;
   std::mutex latch_;
-  std::unordered_map<frame_id_t, std::shared_ptr<Node>> history_access,
-      cache_access;
-  std::list<std::shared_ptr<Node>> history_list, cache_list;
+  std::unordered_map<frame_id_t, std::shared_ptr<Node>> history_access_, cache_access_;
+  std::list<std::shared_ptr<Node>> history_list_, cache_list_;
 };
 
-} // namespace bustub
+}  // namespace bustub
