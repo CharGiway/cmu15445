@@ -14,6 +14,7 @@
 
 #include "common/config.h"
 #include "common/macros.h"
+#include <cstddef>
 #include <ctime>
 #include <deque>
 #include <limits>
@@ -40,10 +41,20 @@ struct Node {
   frame_id_t frame_id_;
   size_t access_cout;
   bool evitable;
+  size_t k_;
   std::list<std::shared_ptr<Node>>::iterator iter;
-  Node()
-      : frame_id_(0), access_cout(0), evitable(false),
-        iter(std::list<std::shared_ptr<Node>>::iterator()) {}
+  std::list<std::time_t> timestamp_list_;
+  Node() = delete;
+  Node(size_t k)
+      : frame_id_(0), access_cout(0), evitable(true), k_(k),
+        iter(std::list<std::shared_ptr<Node>>::iterator()), timestamp_list_() {}
+  void UpdateAccess(time_t current_timestamp_) {
+    access_cout++;
+    timestamp_list_.push_front(current_timestamp_);
+    if (timestamp_list_.size() > k_) {
+      timestamp_list_.pop_back();
+    }
+  }
 };
 
 class LRUKReplacer {
@@ -144,7 +155,7 @@ public:
   void Remove(frame_id_t frame_id);
   bool remove(frame_id_t frame_id,
               std::unordered_map<frame_id_t, std::shared_ptr<Node>> &access_,
-              std::list<std::shared_ptr<Node>>&list_);
+              std::list<std::shared_ptr<Node>> &list_);
 
   /**
    * TODO(P1): Add implementation
@@ -159,12 +170,13 @@ public:
 private:
   // TODO(student): implement me! You can replace these member variables as
   // you like. Remove maybe_unused if you start using them.
-  [[maybe_unused]] size_t current_timestamp_{0};
+  size_t current_timestamp_{0};
   size_t curr_size_;
   size_t replacer_size_;
   size_t k_;
   std::mutex latch_;
-  std::unordered_map<frame_id_t, std::shared_ptr<Node> > history_access, cache_access;
+  std::unordered_map<frame_id_t, std::shared_ptr<Node>> history_access,
+      cache_access;
   std::list<std::shared_ptr<Node>> history_list, cache_list;
 };
 

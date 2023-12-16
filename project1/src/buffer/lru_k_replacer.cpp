@@ -12,6 +12,7 @@
 
 #include "buffer/lru_k_replacer.h"
 #include "common/logger.h"
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -38,7 +39,7 @@ auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
 
   for (auto iter = cache_list.rbegin(); iter != cache_list.rend(); iter++) {
     if ((*iter)->evitable) {
-      std::shared_ptr<Node>tmpIt = (*iter);
+      std::shared_ptr<Node> tmpIt = (*iter);
       *frame_id = tmpIt->frame_id_;
       cache_list.erase(tmpIt->iter);
       cache_access.erase(tmpIt->frame_id_);
@@ -57,7 +58,7 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
     throw std::invalid_argument("frame_id (" + std::to_string(frame_id) +
                                 ") larger than replace_size_");
   }
-
+  current_timestamp_++;
   std::shared_ptr<Node> tmpIt = nullptr;
   if (history_access.find(frame_id) != history_access.end()) {
     tmpIt = history_access[frame_id];
@@ -68,32 +69,42 @@ void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
 
   // 如果还没有，那么需要新建一个
   if (tmpIt == nullptr) {
-    tmpIt = std::make_shared<Node>();
+    tmpIt = std::make_shared<Node>(k_);
     tmpIt->frame_id_ = frame_id;
     history_list.push_front(tmpIt);
     tmpIt->iter = history_list.begin();
     history_access[frame_id] = tmpIt;
-    // curr_size_++  存疑
+    curr_size_++;
   }
 
-  tmpIt->access_cout++;
-  // cache的需要使用LRU算法
-  if (tmpIt->access_cout > k_) {
-    cache_list.erase(tmpIt->iter);
-    cache_list.push_front(tmpIt);
-    tmpIt->iter = cache_list.begin();
+  tmpIt->UpdateAccess(current_timestamp_);
+
+  // history list部分
+  if (tmpIt->access_cout < k_) {
     return;
   }
 
+  // 先插入
   if (tmpIt->access_cout == k_) {
     history_access.erase(tmpIt->frame_id_);
     history_list.erase(tmpIt->iter);
 
-    cache_list.push_front(tmpIt);
-    tmpIt->iter = cache_list.begin();
+    cache_list.push_back(tmpIt);
+    tmpIt->iter = --cache_list.end();
     cache_access[frame_id] = tmpIt;
-    return;
   }
+
+  // 然后看看要不要调整位置
+  cache_list.erase(tmpIt->iter);
+  auto iter = cache_list.begin();
+  for (; iter != cache_list.end(); iter++) {
+    if (tmpIt->timestamp_list_.back() >= (*iter)->timestamp_list_.back()) {
+      break;
+    }
+  }
+  tmpIt->iter = cache_list.insert(iter, tmpIt);
+
+  return;
 }
 
 void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
@@ -133,9 +144,10 @@ void LRUKReplacer::Remove(frame_id_t frame_id) {
   remove(frame_id, cache_access, cache_list);
 }
 
-bool LRUKReplacer::remove(frame_id_t frame_id,
-                          std::unordered_map<frame_id_t, std::shared_ptr<Node>> &access_,
-                          std::list<std::shared_ptr<Node>> &list_) {
+bool LRUKReplacer::remove(
+    frame_id_t frame_id,
+    std::unordered_map<frame_id_t, std::shared_ptr<Node>> &access_,
+    std::list<std::shared_ptr<Node>> &list_) {
   if (access_.find(frame_id) == access_.end()) {
     return false;
   }

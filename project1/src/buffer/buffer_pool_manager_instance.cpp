@@ -14,6 +14,7 @@
 
 #include "common/exception.h"
 #include "common/macros.h"
+#include <memory>
 
 namespace bustub {
 
@@ -42,7 +43,13 @@ BufferPoolManagerInstance::~BufferPoolManagerInstance() {
   delete replacer_;
 }
 
-auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * { return nullptr; }
+auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * {
+  // 先看看有没有空间放下
+  if(free_list_.empty() && replacer_->Size()==0){
+    return nullptr;
+  }
+  return nullptr;
+}
 
 auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * { return nullptr; }
 

@@ -97,7 +97,7 @@ auto ExtendibleHashTable<K, V>::Remove(const K &key) -> bool {
 template <typename K, typename V>
 void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
   std::scoped_lock<std::mutex> lock(latch_);
-  insert(key,value);
+  insert(key, value);
 }
 
 template <typename K, typename V>
@@ -111,14 +111,13 @@ void ExtendibleHashTable<K, V>::insert(const K &key, const V &value) {
     }
     return;
   }
-
+  
   // index 如果满了，就需要开始分裂了
   // 如果是等于global_depth_，那么需要扩展一下
   if (dir_[index]->GetDepth() == this->global_depth_) {
     this->global_depth_++;
     auto oldLen = dir_.size();
     auto tmpBucket = std::vector<std::shared_ptr<Bucket>>(oldLen * 2);
-    this->num_buckets_ = oldLen * 2;
     for (size_t i = 0; i < oldLen; i++) {
       tmpBucket[i] = this->dir_[i];
       tmpBucket[i + oldLen] = this->dir_[i];
@@ -139,19 +138,27 @@ void ExtendibleHashTable<K, V>::insert(const K &key, const V &value) {
                                    this->dir_[index]->GetDepth() + 1);
   }
   auto localItem = this->dir_[index];
-  bool flip = false;
+  // bool flip = false;
+  auto localMask = 1 << (localItem->GetDepth());
   for (size_t i = 0; i < this->dir_.size(); i++) {
     if (dir_[i] != localItem) {
       continue;
     }
-    if (flip) {
-      this->dir_[i] = tmpDir[0];
-      flip = !flip;
-    } else {
+    // if (flip) {
+    //   this->dir_[i] = tmpDir[0];
+    //   flip = !flip;
+    // } else {
+    //   this->dir_[i] = tmpDir[1];
+    //   flip = !flip;
+    // }
+    if (localMask & i) {
       this->dir_[i] = tmpDir[1];
-      flip = !flip;
+    } else {
+      this->dir_[i] = tmpDir[0];
     }
   }
+  this->num_buckets_++;
+
   for (auto const &tmpItem : localItem->GetItems()) {
     auto tmpIndex = IndexOf(tmpItem.first);
     auto success = this->dir_[tmpIndex]->Insert(tmpItem.first, tmpItem.second);
@@ -169,7 +176,7 @@ void ExtendibleHashTable<K, V>::insert(const K &key, const V &value) {
   // }
 
   // 漂亮，假设还需要继续扩容，可以使用同一套代码
-  insert(key,value);
+  insert(key, value);
 
   return;
 }
@@ -194,12 +201,10 @@ auto ExtendibleHashTable<K, V>::Bucket::Find(const K &key, V &value) -> bool {
 
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
-  for (auto it = list_.begin(); it != list_.end(); /* no increment here */) {
+  for (auto it = list_.begin(); it != list_.end(); ++it) {
     if (it->first == key) {
       it = list_.erase(it); // 删除元素，并将迭代器更新为下一个有效位置
       return true;
-    } else {
-      ++it; // 只有在没有删除元素时才递增迭代器
     }
   }
   return false;
